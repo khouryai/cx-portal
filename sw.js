@@ -31,6 +31,7 @@ const SHELL_ASSETS = [
   './tr-children.js',
   './trackplan.js',
   './print-report.js',
+  './drw-parse.js',
   './app.js',
   './cx-dyn-sim-fleet.js',
   './cx-dyn-campaign-fit.js',

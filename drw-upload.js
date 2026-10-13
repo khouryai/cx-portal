@@ -1,22 +1,14 @@
 // ==========================================
 // HITACHI Rail T&C Portal — Drawings: upload a drawing set (drw-upload.js)
 //
-// Upload Drawing Set modal: pick a PDF, calibrate title-block fields, read
-// every sheet's number / title / revision / page, review, import.
-// Moved verbatim out of app.js; loaded AFTER app.js (uses DRAWING_SETS/
-// DRAWING_SHEETS, modal(), _db*, _drawStorage, loadDrawingsData).
+// Upload Drawing Set modal: pick a PDF → (optionally) calibrate title-block
+// boxes → read every page with DrwParse (drw-parse.js) → review → import.
+// The review screen shows where each value was read and how sure the reader
+// is; clicking text on the drawing fills the focused field, and one click can
+// teach that spot to every page of the set.
+// Loaded AFTER app.js (uses DRAWING_SETS/DRAWING_SHEETS, modal(), _db*,
+// _drawStorage, loadDrawingsData).
 // ==========================================
-
-// ── Discipline detection ───────────────────────────────────────────────────
-function _drwDiscipline(sheetNum) {
-  if (!sheetNum) return 'General';
-  const prefix = (sheetNum.match(/^([A-Z]+)/i) || [])[1]?.toUpperCase() || '';
-  const map = { C:'Civil', E:'Electrical', G:'General', IN:'Index', I:'Index',
-                TC:'Train Control', T:'Train Control', M:'Mechanical',
-                S:'Structural', A:'Architectural', L:'Landscape',
-                FP:'Fire Protection', FS:'Fire & Safety' };
-  return map[prefix] || prefix || 'General';
-}
 
 function _drwDisciplineOptions() {
   const opts = [
@@ -42,314 +34,13 @@ function _drwDisciplineListHTML() {
   </datalist>`;
 }
 
-// ── PDF text parsing ───────────────────────────────────────────────────────
-// Title-block field labels we must NOT confuse for values.
-const _DRW_LABELS = [
-  /^contract\s*sheet\s*no\.?:?$/i,
-  /^sheet\s*no\.?:?(\s*of\s*\d+)?$/i,
-  /^page\s*no\.?:?$/i,
-  /^pg\.?\s*no\.?:?$/i,
-  /^dwg\.?\s*no\.?:?$/i,
-  /^drawing\s*no\.?:?$/i,
-  /^drawing\s*number:?$/i,
-  /^drawing\s*title:?$/i,
-  /^rev\.?(ision)?:?$/i,
-  /^revisions?:?$/i,
-  /^scale:?$/i,
-  /^size:?$/i,
-  /^date:?$/i,
-  /^drawn\s*by:?$/i,
-  /^designed\s*by:?$/i,
-  /^approved\s*by:?$/i,
-  /^checked\s*by:?$/i,
-  /^title:?$/i,
-  /^sheet:?$/i,
-  /^of$/i,
-  /^cadd\s*filename:?$/i,
-  /^filename:?$/i,
-  /^nts$/i,
-  /^n\.t\.s\.?$/i,
-  /^project:?$/i,
-  /^description:?$/i,
-  /^bart$/i,
-  /^contract\s*no\.?:?$/i,
-  /^contract:?$/i,
-  // PLM / PDM system labels that appear in some title blocks
-  /^teamcenter(\s+(dwg|drawing|doc))?\s*(no\.?|number|#):?$/i,
-  /^[a-z][a-z\s]+(dwg|drawing|doc)\s*no\.?:$/i,  // e.g. "WBS DWG NO.:"
-  /^wbs\s*(no\.?|number)?:?$/i,
-  /^wbs\s*bs:?$/i,
-  /^cont\.?\s*on:?$/i,
-  /^field\s*office:?$/i,
-  /^master\s*copy:?$/i,
-  /^inspire\s*the\s*next:?$/i,
-  /^hitachi:?$/i,
-  /^approved$/i,                           // bare approval stamp
-  /^cdrl\s*(dwg|drawing)\s*no\.?:?$/i,    // CDRL DWG NO:
-];
-
-// Project-banner text that appears on every sheet — should NEVER be picked as a title.
-// Match by characteristic keywords so spelling variants ("COMMUNICATIONS" vs
-// "COMMINICATIONS") and line splits don't matter.
-const _DRW_BANNER_PATTERNS = [
-  /design[\s-]+build/i,
-  /\bCBTC\b/,
-  /communications?\s+based\s+train\s+control/i,
-  /train\s+control\s+\(?CBTC/i,
-  /\bBART\b/i,                 // BART — always a project/agency name
-  /\bBAY\s+AREA\b/i,           // "San Francisco Bay Area" project header
-  /rapid\s+transit/i,          // any transit authority name
-  /transit\s+district/i,
-  /transit\s+authority/i,
-  /\bHITACHI\b/i,              // company banner
-  /inspire\s+the\s+next/i,     // Hitachi tagline
-  /field\s+office\s+master/i,  // "FIELD OFFICE MASTER COPY" stamp
-];
-
-// Sheet-number formats — checked in order from most specific to least.
-//   E11004-W30-001     long form with page suffix
-//   E11004-W30         2-segment contract sheet no.
-//   496H-110           mixed alpha/digit prefix
-//   E-1001 / E101      legacy short form
-const _DRW_SHEET_PATTERNS = [
-  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+-\d+[A-Z]?$/i,   // E11004-W30-001
-  /^[A-Z]{1,4}\d{2,}-[A-Z0-9]+$/i,             // E11004-W30
-  /^\d+[A-Z]+-\d+[A-Z]?$/i,                      // 496H-110
-  /^[A-Z]{1,4}-\d+[A-Z]?$/i,                     // E-1001
-  /^[A-Z]{1,3}\d{1,4}[A-Z]?$/i,                  // E101, M22A
-];
-
-const _DRW_FILENAME_RE = /([A-Z]{1,4}\d{2,}-[A-Z0-9]+(?:-\d+[A-Z]?)?)/i;
-
+// Calibration fields (colours match the boxes drawn on the page).
 const _DRW_CAL_FIELDS = [
   { key: 'sheetNumber', label: 'Sheet #',  color: '#2563eb' },
   { key: 'pageNumber',  label: 'Page #',   color: '#16a34a' },
   { key: 'sheetTitle',  label: 'Title',    color: '#9333ea' },
   { key: 'revision',    label: 'Revision', color: '#d97706' },
 ];
-
-function _drwIsLabel(s) {
-  const t = s.replace(/\s+/g, ' ').trim();
-  return _DRW_LABELS.some(re => re.test(t));
-}
-
-function _drwIsBanner(s) {
-  return _DRW_BANNER_PATTERNS.some(re => re.test(s));
-}
-
-function _drwMatchSheetNum(s) {
-  const t = s.trim();
-  return _DRW_SHEET_PATTERNS.some(re => re.test(t));
-}
-
-// Returns true when a string is clearly not a drawing title:
-//   • Written-out month dates  → "January 31, 2025"
-//   • No-space hyphenated IDs  → "W37-275-375LB24-D", "779-MAIN", "W39ALNX-D"
-//     (real titles are English phrases and always contain spaces)
-function _drwIsJunkTitle(s) {
-  if (/^(january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(s)) return true;
-  if (!/\s/.test(s) && /-/.test(s)) return true;
-  return false;
-}
-
-function _drwBuildCells(items, W, H, region) {
-  let pdfXMin = 0, pdfXMax = W, pdfYMin = 0, pdfYMax = H * 0.35;
-  if (region && region.fw > 0.01 && region.fh > 0.01) {
-    pdfYMax = H * (1 - region.fy);
-    pdfYMin = H * (1 - region.fy - region.fh);
-    pdfXMin = W * region.fx;
-    pdfXMax = W * (region.fx + region.fw);
-  }
-  // Small tolerance so text items on the exact region boundary aren't excluded
-  // due to float rounding (the difference between (1-fy-fh)*H and the original
-  // boundary can be ~1e-13 even when they're conceptually identical).
-  const EPS = 1;
-  return items
-    .map(it => {
-      const x = it.transform[4], y = it.transform[5];
-      return { x, y, w: it.width || 0, h: it.height || 10, str: (it.str || '').trim() };
-    })
-    .filter(c => c.str
-      && c.x >= pdfXMin - EPS && c.x <= pdfXMax + EPS
-      && c.y >= pdfYMin - EPS && c.y <= pdfYMax + EPS);
-}
-
-// Label-anchored value extraction: find the cell matching labelRe, then return the
-// closest non-label cell that satisfies valueOk, preferring cells directly below
-// or directly to the right of the label (the two standard title-block layouts).
-function _drwFindNearLabel(cells, labelRe, valueOk = (() => true), opts = {}) {
-  const { maxDist = 120 } = opts;
-  const label = cells.find(c => labelRe.test(c.str));
-  if (!label) return null;
-  const cands = cells
-    .filter(c => c !== label && !_drwIsLabel(c.str) && c.str !== label.str)
-    .filter(c => valueOk(c.str))
-    .map(c => {
-      // PDF coords: y increases upward, so "below the label" means c.y < label.y.
-      const below = label.y - c.y;     // positive when c is below
-      const right = c.x - label.x;     // positive when c is to the right
-      const vertical   = below > 0 && below < 40 && Math.abs(right) < 120;
-      const horizontal = Math.abs(below) < 14 && right > 0 && right < 140;
-      if (vertical)   return { c, dist: below + Math.abs(right) * 0.4 };
-      if (horizontal) return { c, dist: right + Math.abs(below) * 0.4 };
-      return { c, dist: Math.hypot(below, right) * 3 };
-    })
-    .filter(o => o.dist < maxDist)
-    .sort((a, b) => a.dist - b.dist);
-  return cands.length ? cands[0].c.str.trim() : null;
-}
-
-function _drwParseSheetInfo(items, W, H, fieldRegions) {
-  // If a calibrated region exists for a field, text is pulled directly from
-  // that spatial area.  Otherwise falls back to the strategies below.
-  const regs = (fieldRegions && typeof fieldRegions.fx !== 'number') ? (fieldRegions || {}) : {};
-
-  // baseCells: all text in the bottom 35% of the page (title-block strip).
-  const baseCells = _drwBuildCells(items, W, H, null);
-  if (!baseCells.length) {
-    return { sheetNumber: null, sheetTitle: null, revision: null, pageNumber: null, discipline: 'General' };
-  }
-
-  function fieldCellsFor(key) {
-    const r = regs[key];
-    if (!r || !r.fw) return null;
-    const fc = _drwBuildCells(items, W, H, r);
-    return fc.length ? fc : null;
-  }
-
-  // ── CONTRACT SHEET NO. ────────────────────────────────────────────────────
-  let sheetNumber = null;
-  const snCells = fieldCellsFor('sheetNumber');
-  if (snCells) {
-    for (const c of snCells) {
-      if (_drwMatchSheetNum(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
-    }
-    if (!sheetNumber && snCells.length) sheetNumber = snCells[0].str.toUpperCase();
-  } else {
-    sheetNumber = _drwFindNearLabel(baseCells, /^contract\s*sheet\s*no\.?$/i, s => _drwMatchSheetNum(s));
-    if (!sheetNumber) sheetNumber = _drwFindNearLabel(baseCells, /^(sheet|dwg|drawing)\s*no\.?$/i, s => _drwMatchSheetNum(s));
-    if (!sheetNumber) {
-      const contractNoVal = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
-      for (const c of baseCells) {
-        if (c.str === contractNoVal) continue;
-        if (_drwMatchSheetNum(c.str) && !_drwIsLabel(c.str)) { sheetNumber = c.str.toUpperCase(); break; }
-      }
-    }
-    if (!sheetNumber) {
-      for (const c of baseCells) {
-        if (/\.(dgn|dwg|pdf)\b/i.test(c.str)) {
-          const m = c.str.match(_DRW_FILENAME_RE);
-          if (m) { sheetNumber = m[1].toUpperCase(); break; }
-        }
-      }
-    }
-  }
-  if (sheetNumber) sheetNumber = sheetNumber.toUpperCase();
-
-  // ── REV — short code only (01, A, B…), never prose text ──────────────────
-  let revision = null;
-  const rvCells = fieldCellsFor('revision');
-  if (rvCells) {
-    for (const c of rvCells) {
-      if (/^[A-Z0-9]{1,3}$/.test(c.str) && !/^(OF|NO|TO|NTS|REV|D)$/i.test(c.str)) {
-        revision = c.str.toUpperCase(); break;
-      }
-    }
-    if (!revision && rvCells.length) revision = rvCells[0].str.toUpperCase();
-  } else {
-    revision = _drwFindNearLabel(baseCells, /^rev\.?(ision)?$/i,
-      s => /^[A-Z0-9]{1,3}$/.test(s.trim()) && !/^(OF|NO|TO|NTS|REV|REVISION|D)$/i.test(s.trim()),
-      { maxDist: 200 });
-    if (!revision) {
-      for (const c of baseCells) {
-        const m = c.str.match(/^rev\.?(?:ision)?[:.\s]+([A-Z0-9]{1,3})$/i);
-        if (m) { revision = m[1]; break; }
-      }
-    }
-  }
-  if (revision) revision = revision.toUpperCase();
-
-  // ── PAGE NO. — digits only ────────────────────────────────────────────────
-  let pageNumber = null;
-  const pnCells = fieldCellsFor('pageNumber');
-  if (pnCells) {
-    for (const c of pnCells) {
-      if (/^\d{1,4}$/.test(c.str.trim()) && c.str !== sheetNumber) { pageNumber = c.str.trim(); break; }
-    }
-    if (!pageNumber && pnCells.length) pageNumber = pnCells[0].str;
-  } else {
-    pageNumber = _drwFindNearLabel(baseCells, /^(page|pg)\s*no\.?$/i,
-      s => /^\d{1,4}$/.test(s.trim()) && s !== sheetNumber,
-      { maxDist: 200 });
-  }
-
-  // ── TITLE — template anchor: before "DESIGN-BUILD" banner in PDF stream ───
-  // In this CBTC drawing template the CAD software writes the per-sheet title
-  // text into the PDF content stream BEFORE the "DESIGN-BUILD OF A
-  // COMMUNICATIONS BASED TRAIN CONTROL (CBTC) SYSTEM" banner object.
-  // Strategy: find the banner item, collect items that (a) appear before it
-  // in the stream AND (b) sit spatially below the banner (lower PDF y-coord)
-  // within the left column (x < 65% of page width, the title-text area).
-  // Multi-line titles are sorted top→bottom and joined with spaces.
-  let sheetTitle = null;
-  const stCells = fieldCellsFor('sheetTitle');
-  if (stCells) {
-    // When the user has explicitly calibrated a region, trust their box —
-    // just concatenate whatever non-empty text is there, sorted top→bottom.
-    const cands = stCells.filter(c => c.str.trim().length > 0);
-    if (cands.length) {
-      sheetTitle = [...cands].sort((a, b) => b.y - a.y).map(c => c.str.trim()).join(' ').trim();
-    }
-  }
-  if (!sheetTitle) {
-    const bannerIdx = items.findIndex(it => /design[\s-]+build/i.test((it.str || '').trim()));
-    if (bannerIdx > 0) {
-      const bannerY = items[bannerIdx].transform[5];
-      const titleLines = items
-        .slice(0, bannerIdx)
-        .filter(it => {
-          const s = (it.str || '').trim();
-          const iy = it.transform[5], ix = it.transform[4];
-          return s.length >= 3
-            && iy < bannerY              // below banner in PDF y-coords
-            && iy > bannerY - H * 0.25  // within 25% page-height below banner
-            && ix < W * 0.65            // left column (title area, not right data column)
-            && !_drwIsLabel(s) && !_drwIsBanner(s) && !_drwMatchSheetNum(s)
-            && !/^\d{1,4}$/.test(s) && !_drwIsJunkTitle(s);
-        })
-        .sort((a, b) => b.transform[5] - a.transform[5]) // top→bottom reading order
-        .map(it => (it.str || '').trim());
-      if (titleLines.length) sheetTitle = titleLines.join(' ');
-    }
-  }
-  if (!sheetTitle) {
-    // Secondary: near an explicit "TITLE" / "DRAWING TITLE" label
-    sheetTitle = _drwFindNearLabel(baseCells, /^(drawing\s*)?title$/i,
-      s => s.length >= 4 && !_drwIsBanner(s) && !_drwIsLabel(s) && !_drwMatchSheetNum(s) && !_drwIsJunkTitle(s));
-  }
-  if (!sheetTitle) {
-    // Last resort: longest non-banner text in bottom strip.
-    // Only applies when a DESIGN-BUILD banner is present (confirms CBTC format).
-    // Drawings without that banner (plumbing, wiring sheets, etc.) return null
-    // rather than picking legend text or cross-reference content.
-    const hasBanner = items.some(it => /design[\s-]+build/i.test((it.str || '').trim()));
-    if (hasBanner) {
-      const contractNo = _drwFindNearLabel(baseCells, /^contract\s*no\.?$/i, () => true);
-      const known = new Set([sheetNumber, revision, pageNumber, contractNo].filter(Boolean).map(s => s.toUpperCase()));
-      const cands = baseCells.filter(c => {
-        const s = c.str;
-        return s.length >= 4 && !_drwIsLabel(s) && !_drwIsBanner(s)
-          && !known.has(s.toUpperCase()) && !/^\d+$/.test(s)
-          && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s)
-          && !/\.(dgn|dwg|pdf)\b/i.test(s) && !_drwMatchSheetNum(s)
-          && !_drwIsJunkTitle(s);
-      });
-      if (cands.length) sheetTitle = cands.reduce((a, b) => b.str.length > a.str.length ? b : a).str;
-    }
-  }
-
-  return { sheetNumber, sheetTitle, revision, pageNumber, discipline: _drwDiscipline(sheetNumber) };
-}
 
 // ── Upload Flow ────────────────────────────────────────────────────────────
 let _drwUploadMeta    = null;
@@ -377,10 +68,13 @@ function _drwCloseUpload() {
   closeModal();
   _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; _drwFieldRegions = {}; _drwCalActiveField = 'sheetNumber';
   _drwCalPage = 1; _drwCalRendering = false; _drwCalZoom = 1.0;
+  _drwRevActiveField = null; _drwRevPhrases = null; _drwRevSpot = null;
 }
 
-function _drwOpenUpload() {
+// from === 'back' when returning from Calibrate (keeps what was entered).
+function _drwOpenUpload(from) {
   if (typeof uiCan === 'function' && !uiCan('drawings', 'upload_set')) { toast('You do not have permission to upload drawing sets', 'error'); return; }
+  if (from !== 'back') { _drwUploadMeta = null; _drwParsedSheets = []; _drwUploadPdfDoc = null; }
   const locs    = [...new Set([...DRAWING_SETS.map(s=>s.location), ...TI.map(r=>r.Location)].filter(Boolean))].sort();
   const locOpts = locs.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
   const today   = new Date().toISOString().slice(0,10);
@@ -428,16 +122,25 @@ function _drwOpenUpload() {
       <div id="drw-upload-err" style="color:var(--bad);font-size:12px;margin-top:4px;display:none;"></div>`,
     footer: `
       <button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>
-      <button class="admin-action-btn" data-action="_drwStep1Next">Next: Calibrate →</button>`,
+      <button class="admin-action-btn-secondary" ${cxAct('_drwStep1Next', 'calibrate')} title="Draw boxes around the title-block fields first">Calibrate fields…</button>
+      <button class="admin-action-btn" ${cxAct('_drwStep1Next', 'read')}>Read sheets →</button>`,
   });
 
   const zone = document.getElementById('drw-drop-zone');
+  // Coming back from Calibrate keeps what was already entered.
+  const prev = _drwUploadMeta;
+  if (prev) {
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    setVal('drw-title', prev.title); setVal('drw-location', prev.location);
+    setVal('drw-import-date', prev.import_date); setVal('drw-rev-date', prev.revision_date); setVal('drw-rel-date', prev.release_date);
+    if (prev.file) { zone._file = prev.file; document.getElementById('drw-file-name').textContent = prev.file.name; }
+  }
   zone.addEventListener('dragover',  e => { e.preventDefault(); zone.style.borderColor='var(--hitachi-red)'; });
   zone.addEventListener('dragleave', () => { zone.style.borderColor=''; });
   zone.addEventListener('drop', e => {
     e.preventDefault(); zone.style.borderColor='';
     const f = e.dataTransfer.files[0];
-    if (f && f.type === 'application/pdf') { document.getElementById('drw-file-name').textContent = f.name; zone._file = f; }
+    if (f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) { document.getElementById('drw-file-name').textContent = f.name; zone._file = f; }
   });
 }
 
@@ -446,7 +149,8 @@ function _drwFileChosen(inp) {
   if (f) { document.getElementById('drw-file-name').textContent = f.name; document.getElementById('drw-drop-zone')._file = f; }
 }
 
-async function _drwStep1Next() {
+// mode: 'read' → straight to reading the sheets; 'calibrate' → draw boxes first.
+async function _drwStep1Next(mode) {
   const title   = document.getElementById('drw-title')?.value.trim();
   const loc     = document.getElementById('drw-location')?.value;
   const impDate = document.getElementById('drw-import-date')?.value;
@@ -459,7 +163,9 @@ async function _drwStep1Next() {
   if (!loc)   { errEl.textContent = 'Location is required.';       errEl.style.display='block'; return; }
   if (!file)  { errEl.textContent = 'Please select a PDF file.';   errEl.style.display='block'; return; }
 
+  const sameFile = _drwUploadMeta && _drwUploadMeta.file === file && _drwUploadPdfDoc;
   _drwUploadMeta = { title, location: loc, import_date: impDate, revision_date: revDate, release_date: relDate, file };
+  if (!sameFile) { _drwParsedSheets = []; _drwUploadPdfDoc = null; }
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
@@ -469,11 +175,17 @@ async function _drwStep1Next() {
   document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
 
   try {
-    if (!await CXLazy.pdfjs()) throw new Error('PDF.js could not be loaded');
-    _drwUploadPdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-    await _drwShowCalibrate();
+    if (!_drwUploadPdfDoc) {
+      if (!await CXLazy.pdfjs()) throw new Error('PDF.js could not be loaded');
+      _drwUploadPdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    }
+    if (mode === 'calibrate') await _drwShowCalibrate();
+    else { _drwFieldRegions = _drwLoadAllFieldRegions(loc); await _drwRunExtract(); }
   } catch(e) {
-    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
+    const msg = e && e.name === 'PasswordException'
+      ? 'This PDF is password-protected. Remove the password (or print it to a new PDF) and upload it again.'
+      : (e && e.message) || String(e);
+    document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(msg)}</p>`;
     document.querySelector('#modal-overlay .modal-footer').innerHTML = `<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Close</button>`;
   }
 }
@@ -543,16 +255,17 @@ async function _drwShowCalibrate() {
     + '<li>Click a field button to select it</li>'
     + '<li>Drag a box around that field\'s value on the PDF</li>'
     + '<li>Repeat for each field to calibrate</li>'
-    + '<li>Fields without a region use auto-detection</li>'
+    + '<li>Fields without a region are found automatically</li>'
     + '</ol>'
+    + '<div style="margin-top:8px;">Boxes are optional: on the review screen you can also click the text on the drawing to fill a field, and teach that spot to every page.</div>'
     + '</div>'
     + '</div>'
     + '</div>';
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = ''
-    + '<button class="admin-action-btn-secondary" data-action="_drwOpenUpload">← Back</button>'
+    + '<button class="admin-action-btn-secondary" ' + cxAct('_drwOpenUpload', 'back') + '>← Back</button>'
     + '<button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>'
-    + '<button class="admin-action-btn" data-action="_drwRunExtract">Extract with Regions →</button>';
+    + '<button class="admin-action-btn" data-action="_drwRunExtract">Read sheets →</button>';
 
   // Wire navigation
   document.getElementById('drw-cal-prev').onclick = () => _drwCalGoToPage(_drwCalPage - 1);
@@ -621,10 +334,11 @@ async function _drwCalRenderPage(pageNum) {
     selCv.style.width  = viewport.width  + 'px';
     selCv.style.height = viewport.height + 'px';
     await page.render({ canvasContext: pdfCv.getContext('2d'), viewport }).promise;
-    // Cache text items for the live preview (getTextContent uses PDF coords at scale=1)
+    // Text items + the scale-1 viewport, for the live "reads as" preview.
     const vp1 = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
-    _drwCalPageItems = { items: content.items, W: vp1.width, H: vp1.height };
+    _drwCalPageItems = { items: content.items, viewport: vp1 };
+    _drwCalUpdateInfo();
 
     _drwCalRedrawRegions(selCv, null);
 
@@ -695,16 +409,20 @@ function _drwCalUpdateInfo() {
   if (!field) return;
   const r = _drwFieldRegions[_drwCalActiveField];
   if (r) {
-    // Live preview: show what text items fall inside this region on the current page
+    // Live preview: what this box reads on the current page, exactly as the import will.
     let previewHtml = '';
     if (_drwCalPageItems && _drwCalPageItems.items) {
-      const cells = _drwBuildCells(_drwCalPageItems.items, _drwCalPageItems.W, _drwCalPageItems.H, r);
-      const found = cells.filter(c => c.str.trim().length > 0).map(c => c.str.trim());
+      const pv = DrwParse.regionPreview(_drwCalPageItems.items, _drwCalPageItems.viewport, _drwCalActiveField, r);
+      const found = pv.lines || [];
       if (found.length) {
-        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:var(--good-light);border:1px solid var(--good-border);border-radius:5px;">'
-          + '<div style="font-size:10px;font-weight:700;color:var(--good);margin-bottom:4px;">Found in region:</div>'
-          + found.slice(0, 8).map(s => '<div style="font-size:11px;color:var(--good);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s) + '</div>').join('')
-          + (found.length > 8 ? '<div style="font-size:10px;color:#4ade80;">+' + (found.length - 8) + ' more</div>' : '')
+        const shaky = !pv.value || pv.conf === 'low';
+        previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:' + (shaky ? 'var(--warn-light)' : 'var(--good-light)') + ';border:1px solid ' + (shaky ? 'var(--warn)' : 'var(--good-border)') + ';border-radius:5px;">'
+          + '<div style="font-size:10px;font-weight:700;color:' + (shaky ? 'var(--warn)' : 'var(--good)') + ';margin-bottom:2px;">Reads as:</div>'
+          + '<div style="font-size:12px;font-weight:700;color:var(--text);font-family:monospace;word-break:break-word;">' + (pv.value ? escapeHtml(pv.value) : '—') + '</div>'
+          + (shaky ? '<div style="font-size:10px;color:var(--warn);margin-top:2px;">That doesn\'t look like a ' + escapeHtml(field.label.toLowerCase()) + ' — check the box covers the value.</div>' : '')
+          + '<div style="font-size:10px;font-weight:700;color:var(--text-muted);margin:6px 0 2px;">Text in the box:</div>'
+          + found.slice(0, 6).map(s => '<div style="font-size:11px;color:var(--text-muted);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s) + '</div>').join('')
+          + (found.length > 6 ? '<div style="font-size:10px;color:var(--text-muted);">+' + (found.length - 6) + ' more</div>' : '')
           + '</div>';
       } else {
         previewHtml = '<div style="margin-top:7px;padding:6px 8px;background:var(--bad-light);border:1px solid var(--bad-border);border-radius:5px;font-size:10px;color:var(--bad);">'
@@ -751,18 +469,52 @@ function _drwCalClear() {
   _drwCalUpdateFieldBar();
 }
 
+// Bookmarks and page labels often carry "E-101 - POWER PLAN" per page — the
+// only source on scanned pages. Best effort: a broken outline is ignored.
+async function _drwPdfHints(pdf) {
+  const hints = Array.from({ length: pdf.numPages }, () => ({}));
+  try {
+    const labels = await pdf.getPageLabels();
+    if (labels) labels.forEach((l, i) => { if (hints[i] && l) hints[i].pageLabel = l; });
+  } catch (e) { /* no page labels */ }
+  try {
+    const outline = await pdf.getOutline();
+    let seen = 0;
+    const walk = async (nodes, depth) => {
+      for (const n of nodes || []) {
+        if (++seen > 5000) return;
+        let dest = n.dest;
+        if (typeof dest === 'string') dest = await pdf.getDestination(dest);
+        if (Array.isArray(dest) && dest[0] != null) {
+          const idx = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]);
+          const h = hints[idx];
+          // the deepest bookmark on a page is the sheet (parents are the set / discipline)
+          if (h && n.title && (h._depth == null || depth > h._depth)) { h.bookmark = n.title; h._depth = depth; }
+        }
+        if (n.items && n.items.length) await walk(n.items, depth + 1);
+      }
+    };
+    if (outline) await walk(outline, 0);
+  } catch (e) { /* no usable outline */ }
+  return hints;
+}
+
+const _DRW_EDIT_FIELDS = ['sheetNumber', 'sheetTitle', 'revision', 'pageNumber', 'discipline'];
+
 async function _drwRunExtract() {
   const _loc = _drwUploadMeta?.location;
   if (_loc) _DRW_CAL_FIELDS.forEach(f => {
-    if (_drwFieldRegions[f.key]) _drwSaveFieldRegion(_loc, f.key, _drwFieldRegions[f.key]);
-    else localStorage.removeItem(_drwFieldRegionKey(_loc, f.key));
+    try {
+      if (_drwFieldRegions[f.key]) _drwSaveFieldRegion(_loc, f.key, _drwFieldRegions[f.key]);
+      else localStorage.removeItem(_drwFieldRegionKey(_loc, f.key));
+    } catch (e) { /* storage unavailable — regions just aren't remembered */ }
   });
   const numPages = _drwUploadPdfDoc.numPages;
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="text-align:center;padding:40px 20px;">
       <div class="spinner" style="margin:0 auto 16px;"></div>
-      <p id="drw-parse-status" style="color:var(--gray-500);">Extracting page 1 of ${numPages}…</p>
+      <p id="drw-parse-status" style="color:var(--gray-500);">Reading page 1 of ${numPages}…</p>
       <div style="margin-top:12px;background:var(--gray-100);border-radius:6px;height:6px;width:260px;margin-left:auto;margin-right:auto;">
         <div id="drw-parse-bar" style="background:var(--hitachi-red);height:6px;border-radius:6px;width:0%;transition:width .2s;"></div>
       </div>
@@ -770,38 +522,35 @@ async function _drwRunExtract() {
   document.querySelector('#modal-overlay .modal-footer').innerHTML = '';
 
   try {
-    const sheets = [];
+    const hints = await _drwPdfHints(_drwUploadPdfDoc);
+    const models = [];
     for (let i = 1; i <= numPages; i++) {
-      document.getElementById('drw-parse-status').textContent = `Extracting page ${i} of ${numPages}…`;
-      document.getElementById('drw-parse-bar').style.width = `${Math.round(i/numPages*100)}%`;
+      const st = document.getElementById('drw-parse-status'), bar = document.getElementById('drw-parse-bar');
+      if (st) st.textContent = `Reading page ${i} of ${numPages}…`;
+      if (bar) bar.style.width = `${Math.round(i/numPages*100)}%`;
       const page     = await _drwUploadPdfDoc.getPage(i);
       const viewport = page.getViewport({ scale: 1 });
       const content  = await page.getTextContent();
-      const parsed   = _drwParseSheetInfo(content.items, viewport.width, viewport.height, _drwFieldRegions);
-      sheets.push({
-        pageIndex: i-1, ...parsed,
-        needsReview: !parsed.sheetNumber || !parsed.sheetTitle,
-        // Pre-uncheck pages with no sheet number AND no title — usually covers/index pages.
-        included: !!(parsed.sheetNumber || parsed.sheetTitle || parsed.pageNumber),
-      });
+      models.push(DrwParse.analyzePage(content.items, viewport, { regions: _drwFieldRegions }));
+      page.cleanup();
     }
-    // Safety dedup: if the same revision value appears on every single included
-    // sheet AND it looks like a label (e.g. "REV" or "REVISION") rather than
-    // an actual revision identifier, clear it.  Title deduplication was removed
-    // because legitimate drawing sets can share the same per-sheet title text.
-    const _dedupRevision = () => {
-      const src = sheets.filter(s => s.included && s.revision);
-      if (src.length < 3) return;
-      const counts = {};
-      src.forEach(s => { const v = s.revision.trim().toUpperCase(); counts[v] = (counts[v]||0) + 1; });
-      Object.entries(counts).forEach(([v, n]) => {
-        if (n === src.length && /^(REV|REVISION|NO\.?)$/i.test(v)) {
-          sheets.forEach(s => { if (s.revision && s.revision.trim().toUpperCase() === v) s.revision = null; });
-        }
-      });
-    };
-    _dedupRevision();
+    const parsed = DrwParse.extractSet(models, { hints });
+    // Re-reading the same PDF (recalibrated, or a spot taught from the review)
+    // keeps everything the user already typed or ticked.
+    const prev = _drwParsedSheets.length === parsed.length ? _drwParsedSheets : null;
+    const sheets = parsed.map((p, i) => {
+      // Pre-uncheck pages with nothing on them (covers / index pages); scanned
+      // pages stay in — they are usually real sheets that need typing in.
+      const s = { ...p, included: p.noText || !!(p.sheetNumber || p.sheetTitle || p.pageNumber), _edited: {} };
+      const o = prev && prev[i];
+      if (o) {
+        _DRW_EDIT_FIELDS.forEach(f => { if (o._edited && o._edited[f]) { s[f] = o[f]; s._edited[f] = true; } });
+        if (o._includedSet) { s.included = o.included; s._includedSet = true; }
+      }
+      return s;
+    });
     _drwParsedSheets = sheets;
+    _drwReviewRefreshFlags(false);
     _drwShowReview(numPages);
   } catch(e) {
     document.querySelector('#modal-overlay .modal-body').innerHTML = `<p style="color:var(--bad);padding:20px;">${escapeHtml(e.message)}</p>`;
@@ -833,6 +582,103 @@ function _drwBumpRev(rev) {
   return t + '-R2';
 }
 
+// Review-screen state
+let _drwRevActiveField = null;   // field the next click on the drawing fills
+let _drwRevPhrases     = null;   // { page, list } text on the previewed page (for click-to-fill)
+let _drwRevSpot        = null;   // { field, idx, box } last text clicked — can be taught to every page
+
+const _DRW_VIA_TEXT = {
+  label: 'next to its title-block label', region: 'from your calibrated box', template: 'from the CBTC title-block layout',
+  learned: 'where the other sheets in this set have it', layout: 'from the title-block layout', pattern: 'from its shape',
+  file: 'from the CAD file name', bookmark: 'from the PDF bookmark', pagelabel: 'from the PDF page label', sequence: 'from the pages either side',
+};
+const _DRW_FIELD_LABEL = { sheetNumber: 'Sheet #', sheetTitle: 'Title', revision: 'Rev', pageNumber: 'Page #' };
+
+// Border + tooltip for one review input: how sure the reader is, and why.
+function _drwRevFieldLook(s, f) {
+  if (s._edited && s._edited[f]) return { border: 'var(--gray-200)', dash: false, tip: 'Entered by you' };
+  const v = s[f], c = s.confidence && s.confidence[f], via = _DRW_VIA_TEXT[s.via && s.via[f]] || '';
+  if (!v) return { border: (f === 'sheetNumber' || f === 'sheetTitle') ? 'var(--warn)' : 'var(--gray-200)', dash: false, tip: 'Not found — type it, or click it on the drawing' };
+  if (c === 'low') return { border: 'var(--warn)', dash: true, tip: 'A guess' + (via ? ' (' + via + ')' : '') + ' — check it' };
+  return { border: 'var(--gray-200)', dash: false, tip: (c === 'high' ? 'Read ' : 'Probably right — read ') + via };
+}
+
+function _drwRevIssues(s) {
+  const out = [];
+  if (s.noText) out.push('No selectable text (scanned?) — type the details');
+  if (s.duplicate) out.push('Sheet # also on page ' + (s._dupPages || []).join(', '));
+  const guess = f => s[f] && s.confidence && s.confidence[f] === 'low' && !(s._edited && s._edited[f]);
+  if (!s.sheetNumber) out.push('No sheet # found'); else if (guess('sheetNumber')) out.push('Sheet # is a guess');
+  if (!s.sheetTitle) out.push('No title found'); else if (guess('sheetTitle')) out.push('Title is a guess');
+  return out;
+}
+
+function _drwRevRowStyle(s) {
+  const upRev = !!s._existingSheet;
+  if (!s.included) return `opacity:0.45;background:var(--gray-50);${upRev ? 'border-left:3px solid var(--accent-amber);' : ''}`;
+  if (upRev) return 'background:var(--warn-light);border-left:3px solid var(--accent-amber);';
+  return s.needsReview ? 'background:var(--warn-light);' : '';
+}
+
+// One short line under the title: up-rev, and what needs a look (all of it on hover).
+function _drwRevStatusHtml(s) {
+  const bits = [];
+  if (s._existingSheet) bits.push(`<span style="color:var(--warn);font-weight:700;">↑ up-rev (was ${escapeHtml(s._existingSheet.revision || '—')})</span>`);
+  const iss = s.included ? _drwRevIssues(s) : [];
+  if (iss.length) bits.push(`<span style="color:var(--warn);font-weight:600;" title="${escapeHtml(iss.join('\n'))}">${icon('alert')} ${escapeHtml(iss[0])}${iss.length > 1 ? ` +${iss.length - 1} more` : ''}</span>`);
+  return bits.join(' · ');
+}
+
+// Recompute duplicates / needs-review across the set; restyle rows in place
+// (never re-render them — that would steal focus from the field being typed in).
+function _drwReviewRefreshFlags(updateDom = true) {
+  const byNum = {};
+  _drwParsedSheets.forEach(s => {
+    s.duplicate = false; s._dupPages = null;
+    const n = DrwParse.normSheet(s.sheetNumber || '');
+    if (n && s.included) (byNum[n] = byNum[n] || []).push(s);
+  });
+  Object.values(byNum).forEach(g => {
+    if (g.length < 2) return;
+    const pages = g.map(s => s.pageNumber || '');
+    if (pages.every(Boolean) && new Set(pages).size === pages.length) return;   // one drawing over several pages
+    g.forEach(s => { s.duplicate = true; s._dupPages = g.filter(o => o !== s).map(o => o.pageIndex + 1); });
+  });
+  _drwParsedSheets.forEach(s => {
+    const low = f => s.confidence && s.confidence[f] === 'low' && !(s._edited && s._edited[f]);
+    s.needsReview = !s.sheetNumber || !s.sheetTitle || !!s.duplicate || low('sheetNumber') || low('sheetTitle');
+  });
+  if (!updateDom) return;
+  _drwParsedSheets.forEach((s, i) => {
+    const row = document.getElementById(`drw-rev-row-${i}`);
+    if (!row) return;
+    row.style.cssText = _drwRevRowStyle(s);
+    ['sheetNumber', 'sheetTitle', 'revision', 'pageNumber'].forEach(f => {
+      const inp = row.querySelector(`input[data-field="${f}"]`);
+      if (!inp) return;
+      const look = _drwRevFieldLook(s, f);
+      inp.style.borderColor = look.border; inp.style.borderStyle = look.dash ? 'dashed' : 'solid'; inp.title = look.tip;
+    });
+    const st = document.getElementById(`drw-rev-status-${i}`);
+    if (st) st.innerHTML = _drwRevStatusHtml(s);
+  });
+  const pill = document.getElementById('drw-needs-pill');
+  if (pill) {
+    const n = _drwParsedSheets.filter(s => s.included && s.needsReview).length;
+    pill.style.background = n ? 'var(--warn-light)' : 'var(--good-light)';
+    pill.style.color = n ? 'var(--warn)' : 'var(--good)';
+    pill.innerHTML = n ? `${icon('alert')} ${n} to check` : '✓ All sheets read';
+  }
+}
+
+function _drwRevInput(s, i, f, style) {
+  const look = _drwRevFieldLook(s, f);
+  return `<input class="form-input" value="${escapeHtml(s[f] || '')}" data-idx="${i}" data-field="${f}" title="${escapeHtml(look.tip)}"
+    aria-label="${escapeHtml(_DRW_FIELD_LABEL[f])}, page ${s.pageIndex + 1}"
+    style="${style}border-color:${look.border};border-style:${look.dash ? 'dashed' : 'solid'};"
+    ${cxOn('change', '_drwReviewEdit', i, f, '$cx.value')} />`;
+}
+
 function _drwShowReview(numPages) {
   // Detect up-revs: existing current sheets at this location with matching drawing numbers.
   const _normNumR = n => (n == null ? '' : String(n).trim().toUpperCase());
@@ -840,23 +686,26 @@ function _drwShowReview(numPages) {
   const existingByNum = {};
   DRAWING_SHEETS.filter(s => s.location === reviewLoc && s.is_current)
     .forEach(s => { if (s.sheet_number) existingByNum[_normNumR(s.sheet_number)] = s; });
-  // On first show, auto-bump revisions for up-rev sheets.
+  // On first show, set the revision for up-rev sheets: the one read off the
+  // drawing when it is newer than the current one, otherwise the next revision.
   _drwParsedSheets.forEach(s => {
     if (!s._upRevInit) {
       const ex = existingByNum[_normNumR(s.sheetNumber || '')];
       if (ex) {
         s._existingSheet = ex;
-        // Up-rev: always advance past the existing sheet's revision. The extract
-        // usually reads the same number off the title block, so bump regardless.
-        s.revision = _drwBumpRev(ex.revision);
+        const readNewer = s.revision && s.confidence && s.confidence.revision !== 'low'
+          && DrwParse.revRank(s.revision) > DrwParse.revRank(ex.revision || '');
+        if (!(s._edited && s._edited.revision) && !readNewer) s.revision = _drwBumpRev(ex.revision);
       }
       s._upRevInit = true;
     }
   });
+  _drwReviewRefreshFlags(false);
 
-  const needsReview   = _drwParsedSheets.filter(s => s.needsReview).length;
   const includedCount = _drwParsedSheets.filter(s => s.included).length;
   const upRevCount    = _drwParsedSheets.filter(s => s.included && s._existingSheet).length;
+  const scanned       = _drwParsedSheets.filter(s => s.noText).length;
+  const boxes         = _DRW_CAL_FIELDS.filter(f => _drwFieldRegions[f.key]).map(f => f.label);
 
   // Keep the wide modal (from calibrate) so the PDF preview is readable.
   const modalEl = document.querySelector('#modal-overlay .modal');
@@ -864,89 +713,79 @@ function _drwShowReview(numPages) {
 
   document.querySelector('#modal-overlay .modal-head .modal-title').textContent = 'Review Sheets';
   const subEl = document.querySelector('#modal-overlay .modal-head .modal-sub');
-  if (subEl) subEl.textContent = 'Click any row to preview that PDF page, fix anything the extract got wrong, uncheck pages to omit, then Confirm.';
+  if (subEl) subEl.textContent = 'Check what was read from each page. Amber = needs a look. Click a field, then click its text on the drawing to fill it.';
+
+  const legend = _DRW_CAL_FIELDS.map(f => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border:2px solid ${f.color};border-radius:2px;"></span>${escapeHtml(f.label)}</span>`).join('');
 
   document.querySelector('#modal-overlay .modal-body').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-      <span style="font-size:13px;color:var(--gray-600);">${numPages} pages parsed.</span>
+      <span style="font-size:13px;color:var(--gray-600);">${numPages} pages read.</span>
       <span id="drw-included-pill" style="background:#e0e7ff;color:var(--info);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${includedCount} of ${numPages} to import</span>
       ${upRevCount ? `<span id="drw-uprev-pill" style="background:var(--warn-light);color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">↑ ${upRevCount} up-rev</span>` : `<span id="drw-uprev-pill" style="display:none;background:var(--warn-light);color:#c2410c;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>`}
-      ${needsReview
-        ? `<span style="background:var(--warn-light);color:var(--warn);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">${icon('alert')} ${needsReview} need manual entry</span>`
-        : `<span style="background:var(--good-light);color:var(--good);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">✓ All sheets parsed</span>`}
+      <span id="drw-needs-pill" style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;"></span>
+      ${scanned ? `<span style="background:var(--gray-100);color:var(--text-muted);padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;" title="These pages are images with no selectable text">${scanned} scanned page${scanned === 1 ? '' : 's'}</span>` : ''}
+      ${boxes.length ? `<span style="font-size:12px;color:var(--text-muted);" title="Calibrated boxes remembered for ${escapeHtml(_drwUploadMeta?.location || '')}">Using saved boxes: ${escapeHtml(boxes.join(', '))} · <button data-action="_drwReviewForgetBoxes" style="background:none;border:none;padding:0;color:var(--hitachi-red);font-weight:600;cursor:pointer;font-size:12px;">Forget</button></span>` : ''}
       <button class="admin-action-btn-secondary" data-action="_drwReviewSelectAll" data-args="[true]" style="font-size:12px;padding:5px 10px;">Select all</button>
       <button class="admin-action-btn-secondary" data-action="_drwReviewSelectAll" data-args="[false]" style="font-size:12px;padding:5px 10px;">Select none</button>
-      <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate" style="font-size:12px;padding:5px 10px;margin-left:auto;">↩ Recalibrate region</button>
+      <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate" style="font-size:12px;padding:5px 10px;margin-left:auto;">Calibrate boxes…</button>
     </div>
     ${_drwDisciplineListHTML()}
-    <div style="display:flex;gap:16px;align-items:flex-start;">
-      <!-- PDF preview -->
-      <div style="flex:1 1 52%;min-width:0;">
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+      <!-- PDF preview (stacks above the table on narrow screens) -->
+      <div style="flex:1 1 420px;min-width:0;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-          <button class="admin-action-btn-secondary" id="drw-rev-prev" style="padding:5px 11px;font-size:13px;">◀</button>
+          <button class="admin-action-btn-secondary" id="drw-rev-prev" aria-label="Previous page" style="padding:5px 11px;font-size:13px;">◀</button>
           <span id="drw-rev-prev-label" style="font-size:12.5px;font-weight:600;color:var(--gray-700);">Page —</span>
-          <button class="admin-action-btn-secondary" id="drw-rev-next" style="padding:5px 11px;font-size:13px;">▶</button>
+          <button class="admin-action-btn-secondary" id="drw-rev-next" aria-label="Next page" style="padding:5px 11px;font-size:13px;">▶</button>
           <span id="drw-rev-prev-meta" style="font-size:12px;color:var(--warn);font-weight:600;"></span>
           <span style="display:inline-flex;align-items:center;gap:4px;margin-left:auto;">
-            <button class="admin-action-btn-secondary" id="drw-rev-zoom-out" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom out">−</button>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-out" aria-label="Zoom out" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom out">−</button>
             <span id="drw-rev-zoom-label" style="font-size:12px;font-weight:600;color:var(--gray-600);min-width:42px;text-align:center;">Fit</span>
-            <button class="admin-action-btn-secondary" id="drw-rev-zoom-in" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom in">+</button>
+            <button class="admin-action-btn-secondary" id="drw-rev-zoom-in" aria-label="Zoom in" style="padding:5px 10px;font-size:14px;font-weight:700;" title="Zoom in">+</button>
             <button class="admin-action-btn-secondary" id="drw-rev-zoom-reset" style="padding:5px 10px;font-size:12px;" title="Fit to width">Fit</button>
           </span>
         </div>
-        <div id="drw-rev-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;max-height:64vh;min-height:300px;display:flex;align-items:flex-start;justify-content:center;">
-          <canvas id="drw-rev-pdf" style="display:block;"></canvas>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;font-size:11.5px;color:var(--text-muted);">
+          <span id="drw-rev-hint" style="flex:1 1 220px;">Click a field in the table, then click its text on the drawing. Shift-click adds more text to a title.</span>
+          <button class="admin-action-btn" id="drw-rev-teach" data-action="_drwReviewTeachSpot" style="display:none;font-size:12px;padding:5px 10px;"></button>
         </div>
+        <div id="drw-rev-stage" style="position:relative;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:6px;overflow:auto;max-height:60vh;min-height:300px;display:flex;align-items:flex-start;justify-content:center;">
+          <canvas id="drw-rev-pdf" style="display:block;cursor:crosshair;" title="Click text to fill the selected field"></canvas>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--text-muted);">Read from: ${legend}<span>(dashed = your calibrated box)</span></div>
       </div>
       <!-- Editable list -->
-      <div style="flex:1 1 48%;min-width:0;">
-        <div style="max-height:64vh;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;">
-          <table class="data-table">
+      <div style="flex:1 1 420px;min-width:0;">
+        <div style="max-height:64vh;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;">
+          <table class="data-table drw-rev-table">
             <thead><tr>
-              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} ${cxOn('change', '_drwReviewSelectAll', '$cx.checked')} title="Toggle all" /></th>
-              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th><th style="width:70px;">Status</th>
+              <th style="width:40px;"><input type="checkbox" id="drw-rev-toggle-all" aria-label="Import all pages" ${includedCount === _drwParsedSheets.length ? 'checked' : ''} ${cxOn('change', '_drwReviewSelectAll', '$cx.checked')} title="Toggle all" /></th>
+              <th style="width:34px;">Pg</th><th>Sheet #</th><th>Page #</th><th>Title</th><th>Rev</th><th>Discipline</th>
             </tr></thead>
-            <tbody>
-              ${_drwParsedSheets.map((s, i) => {
-                const rowUpRev = !!s._existingSheet;
-                const rowStyle = !s.included
-                  ? `opacity:0.45;background:var(--gray-50);${rowUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
-                  : rowUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
-                  : s.needsReview ? 'background:var(--warn-light);' : '';
-                const statusCell = rowUpRev
-                  ? `<span style="display:inline-flex;align-items:center;background:var(--warn-light);color:var(--warn);padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;">↑ Rev</span><br><span style="font-size:10px;color:var(--gray-400);">was: ${escapeHtml(s._existingSheet.revision || '—')}</span>`
-                  : `<span style="font-size:10px;color:var(--gray-400);">New</span>`;
-                return `
-                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" ${cxAct('_drwReviewShowPage', i)} style="${rowStyle}">
-                  <td style="text-align:center;" data-action=""><input type="checkbox" ${s.included ? 'checked' : ''} ${cxOn('change', '_drwReviewToggle', i, '$cx.checked')} /></td>
+            <tbody id="drw-rev-body">
+              ${_drwParsedSheets.map((s, i) => `
+                <tr id="drw-rev-row-${i}" class="drw-rev-clickable" ${cxAct('_drwReviewShowPage', i)} style="${_drwRevRowStyle(s)}">
+                  <td style="text-align:center;" data-action=""><input type="checkbox" aria-label="Import page ${s.pageIndex + 1}" ${s.included ? 'checked' : ''} ${cxOn('change', '_drwReviewToggle', i, '$cx.checked')} /></td>
                   <td style="color:var(--gray-400);font-size:12px;">${s.pageIndex+1}</td>
-                  <td><input class="form-input" value="${escapeHtml(s.sheetNumber||'')}"
-                    style="width:110px;font-family:monospace;font-size:12px;padding:3px 6px;border-color:${s.sheetNumber?'var(--gray-200)':'var(--warn)'};"
-                    ${cxOn('change', '_drwReviewEdit', i, 'sheetNumber', '$cx.value')} /></td>
-                  <td><input class="form-input" value="${escapeHtml(s.pageNumber||'')}"
-                    style="width:54px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;"
-                    ${cxOn('change', '_drwReviewEdit', i, 'pageNumber', '$cx.value')} /></td>
-                  <td><input class="form-input" value="${escapeHtml(s.sheetTitle||'')}"
-                    style="width:100%;min-width:130px;font-size:12px;padding:3px 6px;border-color:${s.sheetTitle?'var(--gray-200)':'var(--warn)'};"
-                    ${cxOn('change', '_drwReviewEdit', i, 'sheetTitle', '$cx.value')} /></td>
-                  <td><input class="form-input" value="${escapeHtml(s.revision||'')}"
-                    style="width:48px;font-size:12px;padding:3px 6px;"
-                    ${cxOn('change', '_drwReviewEdit', i, 'revision', '$cx.value')} /></td>
+                  <td>${_drwRevInput(s, i, 'sheetNumber', 'width:118px;font-family:monospace;font-size:12px;padding:3px 6px;')}</td>
+                  <td>${_drwRevInput(s, i, 'pageNumber', 'width:54px;font-family:monospace;font-size:12px;padding:3px 6px;text-align:center;')}</td>
+                  <td>${_drwRevInput(s, i, 'sheetTitle', 'width:100%;min-width:130px;font-size:12px;padding:3px 6px;')}
+                    <div id="drw-rev-status-${i}" style="font-size:10.5px;line-height:1.3;margin-top:3px;">${_drwRevStatusHtml(s)}</div></td>
+                  <td>${_drwRevInput(s, i, 'revision', 'width:48px;font-size:12px;padding:3px 6px;')}</td>
                   <td id="drw-disc-cell-${i}" style="font-size:12px;color:var(--gray-500);">${escapeHtml(s.discipline||'—')}</td>
-                  <td style="text-align:center;padding:4px;">${statusCell}</td>
-                </tr>`;
-              }).join('')}
+                </tr>`).join('')}
             </tbody>
           </table>
         </div>
-        <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Click a row to preview its page. Edit any field directly; discipline suggestions come from Field Config.</p>
+        <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">Hover a field to see where it was read. Discipline suggestions come from Field Config.</p>
       </div>
     </div>`;
 
   _drwHydrateDisciplineReviewInputs();
+  _drwReviewRefreshFlags(true);
 
   document.querySelector('#modal-overlay .modal-footer').innerHTML = `
-    <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate">← Recalibrate</button>
+    <button class="admin-action-btn-secondary" data-action="_drwShowCalibrate">← Calibrate boxes</button>
     <button class="admin-action-btn-secondary" data-action="_drwCloseUpload">Cancel</button>
     <button class="admin-action-btn" data-action="_drwConfirmImport">Confirm &amp; Import</button>`;
 
@@ -960,10 +799,23 @@ function _drwShowReview(numPages) {
   if (zInBtn)  zInBtn.onclick  = () => _drwReviewZoom(1.25);
   if (zOutBtn) zOutBtn.onclick = () => _drwReviewZoom(0.8);
   if (zRstBtn) zRstBtn.onclick = () => _drwReviewZoom(0);
+  const cv = document.getElementById('drw-rev-pdf');
+  if (cv) cv.onclick = _drwReviewCanvasClick;
+  const body = document.getElementById('drw-rev-body');
+  if (body) body.addEventListener('focusin', e => {
+    const inp = e.target.closest && e.target.closest('input[data-field]');
+    if (!inp) return;
+    _drwRevActiveField = inp.dataset.field;
+    const hint = document.getElementById('drw-rev-hint');
+    if (hint) hint.textContent = `Click the ${_DRW_FIELD_LABEL[_drwRevActiveField]} text on the drawing to fill it${_drwRevActiveField === 'sheetTitle' ? ' (Shift-click adds a line)' : ''}.`;
+  });
+  _drwRevPhrases = null;
+  _drwRevSpot = null;
   _drwReviewZoomScale = 0; // 0 = fit-to-width
-  // Preview the first page that's set to import (fall back to page 1).
-  const firstIncluded = _drwParsedSheets.findIndex(s => s.included);
-  _drwReviewShowPage(firstIncluded >= 0 ? firstIncluded : 0);
+  // Preview the first page that needs a look, else the first one to import.
+  let first = _drwParsedSheets.findIndex(s => s.included && s.needsReview);
+  if (first < 0) first = _drwParsedSheets.findIndex(s => s.included);
+  _drwReviewShowPage(first >= 0 ? first : 0);
 }
 
 // Zoom the review preview. factor 0 = fit-to-width; otherwise multiply current scale.
@@ -1002,8 +854,10 @@ function _drwReviewStep(delta) {
   _drwReviewShowPage(Math.max(0, Math.min(_drwParsedSheets.length - 1, _drwReviewSelectedIdx + delta)));
 }
 
+let _drwReviewPending = null;    // a page asked for while another was rendering
 async function _drwReviewRenderPage(pageNum) {
-  if (!_drwUploadPdfDoc || _drwReviewRendering) return;
+  if (!_drwUploadPdfDoc) return;
+  if (_drwReviewRendering) { _drwReviewPending = pageNum; return; }
   _drwReviewRendering = true;
   try {
     const page  = await _drwUploadPdfDoc.getPage(pageNum);
@@ -1021,43 +875,149 @@ async function _drwReviewRenderPage(pageNum) {
     // Center horizontally only when wider than the stage; otherwise left-align.
     if (stage) stage.style.justifyContent = viewport.width > maxW ? 'flex-start' : 'center';
     await page.render({ canvasContext: cv.getContext('2d'), viewport }).promise;
-    // Draw field-region overlays so the user can see exactly where calibration lands.
+    const ctx2 = cv.getContext('2d');
+    const lw = Math.max(2, cv.width / 300);
+    const fs = Math.max(11, Math.round(cv.width / 55));
+    // Calibrated boxes (dashed) …
     const _revLoc = _drwUploadMeta?.location;
     const _revRegs = Object.keys(_drwFieldRegions).length > 0
       ? _drwFieldRegions
       : (_revLoc ? _drwLoadAllFieldRegions(_revLoc) : {});
-    if (Object.keys(_revRegs).length > 0) {
-      const ctx2 = cv.getContext('2d');
-      const lw = Math.max(2, cv.width / 300);
-      const fs = Math.max(11, Math.round(cv.width / 55));
+    _DRW_CAL_FIELDS.forEach(f => {
+      const r = _revRegs[f.key];
+      if (!r || !r.fw || !r.fh) return;
+      const rx = r.fx * cv.width, ry = r.fy * cv.height;
+      const rw = r.fw * cv.width,  rh = r.fh * cv.height;
+      ctx2.save();
+      ctx2.strokeStyle = f.color; ctx2.lineWidth = lw;
+      ctx2.setLineDash([8, 4]);
+      ctx2.strokeRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
+      ctx2.fillStyle = f.color + '12';
+      ctx2.fillRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
+      ctx2.restore();
+    });
+    // … and where each value on this page was actually read (solid, labelled;
+    // tags step aside when two values sit close together).
+    const sheet = _drwParsedSheets.find(x => x.pageIndex + 1 === pageNum);
+    if (sheet && sheet.sources) {
+      const placed = [];
+      const hits = (a) => placed.some(b => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]);
       _DRW_CAL_FIELDS.forEach(f => {
-        const r = _revRegs[f.key];
-        if (!r || !r.fw || !r.fh) return;
-        const rx = r.fx * cv.width, ry = r.fy * cv.height;
-        const rw = r.fw * cv.width,  rh = r.fh * cv.height;
+        const b = sheet.sources[f.key];
+        if (!b || !(b.w > 0) || !(b.h > 0)) return;
+        const pad = lw * 2;
+        const rx = b.x * cv.width - pad, ry = b.y * cv.height - pad, rw = b.w * cv.width + pad * 2, rh = b.h * cv.height + pad * 2;
         ctx2.save();
         ctx2.strokeStyle = f.color; ctx2.lineWidth = lw;
-        ctx2.setLineDash([8, 4]);
-        ctx2.strokeRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
-        ctx2.fillStyle = f.color + '1a';
-        ctx2.fillRect(rx + lw, ry + lw, rw - lw*2, rh - lw*2);
-        ctx2.setLineDash([]);
+        ctx2.strokeRect(rx, ry, rw, rh);
         ctx2.font = `bold ${fs}px sans-serif`;
-        const tw = ctx2.measureText(f.label).width;
-        ctx2.fillStyle = f.color + 'cc';
-        ctx2.fillRect(rx + lw, ry + lw, tw + 8, fs + 6);
+        const tw = ctx2.measureText(f.label).width + 8, th = fs + 6;
+        const spots = [[rx, ry - th], [rx, ry + rh], [rx + rw - tw, ry - th - th], [rx + rw - tw, ry + rh + th], [rx + rw + 2, ry]];
+        let tag = spots.map(([x, y]) => [Math.max(0, Math.min(cv.width - tw, x)), Math.max(0, Math.min(cv.height - th, y))])
+          .map(([x, y]) => [x, y, x + tw, y + th]).find(r => !hits(r));
+        if (!tag) tag = [Math.max(0, rx), Math.max(0, ry - th), Math.max(0, rx) + tw, Math.max(0, ry - th) + th];
+        placed.push(tag);
+        ctx2.fillStyle = f.color;
+        ctx2.fillRect(tag[0], tag[1], tw, th);
         ctx2.fillStyle = '#fff';
-        ctx2.fillText(f.label, rx + lw + 4, ry + lw + fs);
+        ctx2.fillText(f.label, tag[0] + 4, tag[1] + fs + 1);
         ctx2.restore();
       });
     }
     const zl = document.getElementById('drw-rev-zoom-label');
     if (zl) zl.textContent = _drwReviewZoomScale ? `${Math.round((_drwReviewZoomScale / _drwReviewFitScale) * 100)}%` : 'Fit';
+    // Text on this page, for click-to-fill.
+    if (!_drwRevPhrases || _drwRevPhrases.page !== pageNum) {
+      const tc = await page.getTextContent();
+      _drwRevPhrases = { page: pageNum, list: DrwParse.pagePhrases(tc.items, page.getViewport({ scale: 1 })) };
+    }
   } catch (e) {
     console.warn('[drw-review] preview render failed:', e.message);
   } finally {
     _drwReviewRendering = false;
+    if (_drwReviewPending != null) { const n = _drwReviewPending; _drwReviewPending = null; _drwReviewRenderPage(n); }
   }
+}
+
+// The value a clicked piece of text gives a field ("DWG NO: E-101" → "E-101").
+function _drwRevValueFrom(field, str) {
+  const lab = DrwParse.classifyLabel(str);
+  const text = lab && lab.rest && lab.f === field ? lab.rest : String(str || '').trim();
+  const toks = text.split(/\s+/);
+  if (field === 'sheetNumber') {
+    const t = toks.find(x => DrwParse.sheetWeight(x) > 0);
+    return DrwParse.normSheet(t || text);
+  }
+  if (field === 'revision') {
+    const m = text.toUpperCase().match(/\bREV(?:ISION)?\.?\s*[:#]?\s*([A-Z0-9]{1,3})\b/);
+    if (m && DrwParse.isRevCode(m[1])) return m[1];
+    const t = toks.find(x => DrwParse.isRevCode(x));
+    return (t || text).toUpperCase();
+  }
+  if (field === 'pageNumber') {
+    const m = text.match(/(\d{1,4})\s*(?:of|\/)\s*\d+/i) || text.match(/\d{1,4}/);
+    return m ? (m[1] || m[0]) : text;
+  }
+  return text;
+}
+
+function _drwReviewCanvasClick(e) {
+  const hint = document.getElementById('drw-rev-hint');
+  const say = t => { if (hint) hint.textContent = t; };
+  const field = _drwRevActiveField;
+  if (!field || !_DRW_FIELD_LABEL[field]) { say('First click a Sheet #, Title, Rev or Page # field in the table, then click its text here.'); return; }
+  const s = _drwParsedSheets[_drwReviewSelectedIdx];
+  if (!s || !_drwRevPhrases || _drwRevPhrases.page !== s.pageIndex + 1) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const fx = (e.clientX - rect.left) / rect.width, fy = (e.clientY - rect.top) / rect.height;
+  const tol = 0.004;
+  const hits = _drwRevPhrases.list.filter(p => fx >= p.x - tol && fx <= p.x + p.w + tol && fy >= p.y - tol && fy <= p.y + p.h + tol);
+  if (!hits.length) { say(s.noText ? 'This page is a scanned image — there is no text to click. Type the value instead.' : 'No text there — click directly on the words.'); return; }
+  const p = hits.sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  const idx = _drwReviewSelectedIdx;
+  let value = _drwRevValueFrom(field, p.str);
+  let box = [p.x, p.y, p.x + p.w, p.y + p.h];
+  const sp = _drwRevSpot;
+  if (field === 'sheetTitle' && e.shiftKey && s.sheetTitle && sp && sp.field === field && sp.idx === idx) {
+    value = s.sheetTitle + ' ' + value;
+    box = [Math.min(box[0], sp.box[0]), Math.min(box[1], sp.box[1]), Math.max(box[2], sp.box[2]), Math.max(box[3], sp.box[3])];
+  }
+  _drwRevSpot = { field, idx, box };
+  const inp = document.querySelector(`#drw-rev-row-${idx} input[data-field="${field}"]`);
+  if (inp) inp.value = value;
+  _drwReviewEdit(idx, field, value);
+  s.sources = s.sources || {};
+  s.sources[field] = { x: box[0], y: box[1], w: box[2] - box[0], h: box[3] - box[1] };
+  const teach = document.getElementById('drw-rev-teach');
+  if (teach && _drwParsedSheets.length > 1) {
+    teach.textContent = `Read ${_DRW_FIELD_LABEL[field]} from this spot on every page`;
+    teach.style.display = '';
+  }
+  say(`${_DRW_FIELD_LABEL[field]} set to “${value}”.`);
+  _drwReviewRenderPage(s.pageIndex + 1);
+}
+
+// Turn the last clicked text into a calibrated box for that field and re-read
+// the whole set from it (everything already typed is kept).
+async function _drwReviewTeachSpot() {
+  const sp = _drwRevSpot;
+  if (!sp) return;
+  const w = sp.box[2] - sp.box[0], h = sp.box[3] - sp.box[1];
+  const padX = Math.max(0.006, w * 0.3), padY = Math.max(0.004, h * (sp.field === 'sheetTitle' ? 0.6 : 0.35));
+  const x0 = Math.max(0, sp.box[0] - padX), y0 = Math.max(0, sp.box[1] - padY);
+  const x1 = Math.min(1, sp.box[2] + padX), y1 = Math.min(1, sp.box[3] + padY);
+  _drwFieldRegions[sp.field] = { fx: x0, fy: y0, fw: x1 - x0, fh: y1 - y0 };
+  _drwRevSpot = null;
+  const label = _DRW_FIELD_LABEL[sp.field];
+  await _drwRunExtract();
+  toast(`${label} is now read from that spot on every page (remembered for ${_drwUploadMeta?.location || 'this location'}).`, 'success');
+}
+
+// Drop this location's calibrated boxes and re-read with automatic detection.
+async function _drwReviewForgetBoxes() {
+  _drwFieldRegions = {};
+  await _drwRunExtract();   // saving no regions clears them for the location
+  toast('Saved boxes forgotten — sheets re-read automatically.', 'success');
 }
 
 function _drwHydrateDisciplineReviewInputs() {
@@ -1066,53 +1026,44 @@ function _drwHydrateDisciplineReviewInputs() {
     if (!cell) return;
     cell.innerHTML = `
       <input id="drw-discipline-${i}" class="form-input" list="drw-discipline-options" value="${escapeHtml(s.discipline || '')}"
-        style="width:160px;font-size:12px;padding:3px 6px;"
+        aria-label="Discipline, page ${s.pageIndex + 1}" style="width:104px;font-size:12px;padding:3px 6px;"
         placeholder="Discipline..." ${cxOn('change', '_drwReviewEdit', i, 'discipline', '$cx.value')} />`;
   });
 }
 
 function _drwReviewEdit(idx, field, value) {
-  if (_drwParsedSheets[idx]) {
-    _drwParsedSheets[idx][field] = value;
-    if (field === 'sheetNumber') {
-      _drwParsedSheets[idx].discipline = _drwDiscipline(value);
-      const disciplineInput = document.getElementById(`drw-discipline-${idx}`);
-      if (disciplineInput) disciplineInput.value = _drwParsedSheets[idx].discipline || '';
-    }
+  const s = _drwParsedSheets[idx];
+  if (!s) return;
+  s[field] = typeof value === 'string' ? value.trim() : value;
+  s._edited = s._edited || {};
+  s._edited[field] = true;
+  if (field === 'sheetNumber' && !s._edited.discipline) {
+    s.discipline = DrwParse.discipline(s[field]);
+    const disciplineInput = document.getElementById(`drw-discipline-${idx}`);
+    if (disciplineInput) disciplineInput.value = s.discipline || '';
   }
+  if (field !== 'discipline') _drwReviewRefreshFlags(true);
 }
 
 function _drwReviewToggle(idx, included) {
   if (!_drwParsedSheets[idx]) return;
   _drwParsedSheets[idx].included = !!included;
-  const row = document.getElementById(`drw-rev-row-${idx}`);
-  if (row) {
-    const s = _drwParsedSheets[idx];
-    const hasUpRev = !!s._existingSheet;
-    row.style.cssText = !s.included
-      ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
-      : hasUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
-      : s.needsReview ? 'background:var(--warn-light);' : '';
-  }
+  _drwParsedSheets[idx]._includedSet = true;
+  _drwReviewRefreshFlags(true);
   _drwReviewUpdateCounts();
 }
 
 function _drwReviewSelectAll(checked) {
   _drwParsedSheets.forEach((s, i) => {
     s.included = !!checked;
+    s._includedSet = true;
     const row = document.getElementById(`drw-rev-row-${i}`);
     const cb  = row?.querySelector('td:first-child input[type="checkbox"]');
     if (cb) cb.checked = !!checked;
-    if (row) {
-      const hasUpRev = !!s._existingSheet;
-      row.style.cssText = !s.included
-        ? `opacity:0.45;background:var(--gray-50);${hasUpRev ? 'border-left:3px solid var(--accent-amber);' : ''}`
-        : hasUpRev ? 'background:var(--warn-light);border-left:3px solid var(--accent-amber);'
-        : s.needsReview ? 'background:var(--warn-light);' : '';
-    }
   });
   const toggle = document.getElementById('drw-rev-toggle-all');
   if (toggle) toggle.checked = !!checked;
+  _drwReviewRefreshFlags(true);
   _drwReviewUpdateCounts();
 }
 

@@ -8645,6 +8645,8 @@ a:focus-visible {
 }
 .drw-del-btn:hover { opacity: 1; background: var(--bad-light); }
 .drw-rev-clickable { cursor: pointer; }
+/* Upload review table: compact cells so every column fits beside the page preview */
+.drw-rev-table th, .drw-rev-table td { padding: 6px 6px; }
 #modal-overlay tr.drw-rev-selected { background: #eef2ff !important; opacity: 1 !important; }
 
 /* ============================================================
